@@ -39,6 +39,7 @@
   thead th:first-child{z-index:25;}
   thead th{position:sticky;top:0;z-index:15;background:var(--bg-raised);font-family:var(--font-mono);font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--text-dim);padding:12px 14px;text-align:right;font-weight:400;white-space:nowrap;user-select:none;cursor:pointer;transition:color .15s;border-bottom:1px solid var(--border);}
   thead th:hover{color:var(--accent);}
+  thead th.sort-active{color:var(--accent);}
   thead th:first-child{text-align:left;padding-left:24px;min-width:210px;background:var(--bg-raised);}
   thead th.total-col{border-left:1px solid var(--border);}
   tbody tr.team-row{border-bottom:1px solid var(--border-soft);background:var(--bg-base);cursor:pointer;transition:background .12s;}
@@ -115,7 +116,7 @@ const nbaIds={ATL:1610612737,BOS:1610612738,BKN:1610612751,CHO:1610612766,CHI:16
 const teamAbbrMap={'Atlanta Hawks':'ATL','Boston Celtics':'BOS','Brooklyn Nets':'BKN','Charlotte Hornets':'CHO','Chicago Bulls':'CHI','Cleveland Cavaliers':'CLE','Dallas Mavericks':'DAL','Denver Nuggets':'DEN','Detroit Pistons':'DET','Golden State Warriors':'GSW','Houston Rockets':'HOU','Indiana Pacers':'IND','Los Angeles Clippers':'LAC','LA Clippers':'LAC','Los Angeles Lakers':'LAL','LA Lakers':'LAL','Memphis Grizzlies':'MEM','Miami Heat':'MIA','Milwaukee Bucks':'MIL','Minnesota Timberwolves':'MIN','New Orleans Pelicans':'NOP','New York Knicks':'NYK','Oklahoma City Thunder':'OKC','Orlando Magic':'ORL','Philadelphia 76ers':'PHI','Phoenix Suns':'PHX','Portland Trail Blazers':'POR','Sacramento Kings':'SAC','San Antonio Spurs':'SAS','Toronto Raptors':'TOR','Utah Jazz':'UTA','Washington Wizards':'WAS'};
 function logoUrl(team){const c=teamAbbrMap[team];const id=nbaIds[c];return id?`https://cdn.nba.com/logos/nba/${id}/primary/L/logo.svg`:'';}
 
-let allTeamData={},sortedTeams=[],expandedSet=new Set(),maxTotal=1;
+let allTeamData={},sortedTeams=[],expandedSet=new Set(),maxTotal=1,sortKey='total',sortAsc=false;
 function escKey(s){return s.replace(/[^a-z0-9]/gi,'_');}
 function parseMoney(s){if(!s||!s.trim()||s.trim()==='-'||s.includes('$ -'))return 0;let c=s.replace(/[$,"\s]/g,'');if(c.startsWith('(')&&c.endsWith(')'))c='-'+c.slice(1,-1);const n=parseFloat(c);return isNaN(n)?0:n;}
 function formatMoney(n){if(n===0)return'—';const abs=Math.abs(n);const fmt='$'+abs.toLocaleString('en-US',{maximumFractionDigits:0});return n<0?`(${fmt})`:fmt;}
@@ -150,9 +151,9 @@ function parseData(csv){
     allTeamData[team].push({yr,taxSpace,repeater,taxAmts,total});
   }
   sortedTeams=Object.keys(allTeamData).sort((a,b)=>{
-    const at=allTeamData[a].reduce((s,y)=>s+y.total,0);const bt=allTeamData[b].reduce((s,y)=>s+y.total,0);return bt-at;
+    const at=Math.abs(allTeamData[a].reduce((s,y)=>s+y.total,0));const bt=Math.abs(allTeamData[b].reduce((s,y)=>s+y.total,0));return bt-at;
   });
-  maxTotal=Math.max(...sortedTeams.map(t=>allTeamData[t].reduce((s,y)=>s+y.total,0)),1);
+  maxTotal=Math.max(...sortedTeams.map(t=>Math.abs(allTeamData[t].reduce((s,y)=>s+y.total,0))),1);
 }
 
 function updateKPIs(){
@@ -165,15 +166,16 @@ function updateKPIs(){
 function renderMainTable(){
   if(!sortedTeams.length){document.getElementById('app').innerHTML='<div style="text-align:center;padding:60px;color:var(--text-dim)">No team data found</div>';return;}
   const years=['25/26','26/27','27/28','28/29','29/30'];
-  const yearCols=years.map((y,i)=>`<th onclick="sortByYear(${i})">${y}<span style="opacity:.4;font-size:8px;margin-left:3px">⇅</span></th>`).join('');
+  const arrow=k=>sortKey===k?(sortAsc?' ▲':' ▼'):'';
+  const yearCols=years.map((y,i)=>`<th onclick="sortByYear(${i})" class="${sortKey==='yr'+i?'sort-active':''}">${y}<span style="opacity:.5;font-size:8px;margin-left:3px">${sortKey==='yr'+i?(sortAsc?'▲':'▼'):'⇅'}</span></th>`).join('');
   let html=`<div class="table-wrapper"><table><thead><tr>
-    <th style="text-align:left">Team</th>
+    <th style="text-align:left" onclick="sortByName()" class="${sortKey==='name'?'sort-active':''}">Team<span style="opacity:.5;font-size:8px;margin-left:3px">${sortKey==='name'?(sortAsc?'▲':'▼'):'⇅'}</span></th>
     ${yearCols}
-    <th class="total-col" style="text-align:right">Total Tax</th>
+    <th class="total-col ${sortKey==='total'?'sort-active':''}" style="text-align:right" onclick="sortByTotal()">Total Tax<span style="opacity:.5;font-size:8px;margin-left:3px">${sortKey==='total'?(sortAsc?'▲':'▼'):'⇅'}</span></th>
   </tr></thead><tbody>`;
   sortedTeams.forEach((team,idx)=>{
     const key=escKey(team);const yd=allTeamData[team]||[];const logo=logoUrl(team);
-    const grand=yd.reduce((s,y)=>s+y.total,0);const frac=grand/maxTotal;const bc=barClass(frac);
+    const grand=yd.reduce((s,y)=>s+y.total,0);const frac=Math.abs(grand)/maxTotal;const bc=barClass(frac);
     const isRep=yd.some(y=>y.repeater&&y.repeater.toLowerCase().includes('repeater'));
     // Map each season to its total, aligned to the 5 year columns
     const byYear={};yd.forEach(y=>byYear[y.yr]=y);
@@ -207,7 +209,18 @@ function updateVisibility(){
   document.querySelectorAll('tr.year-row').forEach(el=>el.classList.toggle('show',expandedSet.has(el.dataset.team)));
   document.querySelectorAll('tr.team-row').forEach(tr=>tr.classList.toggle('expanded',expandedSet.has(tr.dataset.team)));
 }
-function sortByYear(i){const years=['25/26','26/27','27/28','28/29','29/30'];const yr=years[i];function getYrTotal(t){const e=(allTeamData[t]||[]).find(y=>y.yr===yr);return e?e.total:0;}sortedTeams.sort((a,b)=>getYrTotal(b)-getYrTotal(a));renderMainTable();}
+function teamGrand(t){return allTeamData[t].reduce((s,y)=>s+y.total,0);}
+function yrTotal(t,i){const years=['25/26','26/27','27/28','28/29','29/30'];const e=(allTeamData[t]||[]).find(y=>y.yr===years[i]);return e?e.total:0;}
+function applySort(){
+  if(sortKey==='name'){sortedTeams.sort((a,b)=>sortAsc?a.localeCompare(b):b.localeCompare(a));}
+  else if(sortKey==='total'){sortedTeams.sort((a,b)=>{const d=Math.abs(teamGrand(b))-Math.abs(teamGrand(a));return sortAsc?-d:d;});}
+  else if(sortKey.startsWith('yr')){const i=parseInt(sortKey.slice(2));sortedTeams.sort((a,b)=>{const d=Math.abs(yrTotal(b,i))-Math.abs(yrTotal(a,i));return sortAsc?-d:d;});}
+  renderMainTable();
+}
+function toggleSort(key,defaultAsc){if(sortKey===key){sortAsc=!sortAsc;}else{sortKey=key;sortAsc=defaultAsc;}applySort();}
+function sortByName(){toggleSort('name',true);}
+function sortByTotal(){toggleSort('total',false);}
+function sortByYear(i){toggleSort('yr'+i,false);}
 async function init(){
   try{const resp=await fetch(CSV_URL);if(!resp.ok)throw new Error();parseData(await resp.text());}
   catch(e){try{parseData(atob(FALLBACK_B64));}catch(e2){document.getElementById('app').innerHTML='<div style="text-align:center;padding:80px;color:var(--bar-hot)">Failed to load data.</div>';return;}}
