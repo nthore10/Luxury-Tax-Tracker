@@ -84,16 +84,6 @@
       <div class="tm-title-sub">// Projected tax by team by year</div>
     </div>
   </div>
-  <div class="tm-meta">
-    <div class="tm-meta-item">
-      <div class="tm-meta-label">Total Tax</div>
-      <div class="tm-meta-value" id="kpiTax">$0</div>
-    </div>
-    <div class="tm-meta-item">
-      <div class="tm-meta-label">Taxpayers</div>
-      <div class="tm-meta-value" id="kpiPayers">0</div>
-    </div>
-  </div>
 </div>
 
 <div class="tm-controls">
@@ -111,6 +101,14 @@
 </div>
 
 <script>
+(function(){
+  var _gbi = document.getElementById.bind(document);
+  var _removed = {kpiTeams:1,kpiTotal:1,kpiPayroll:1,kpiPlayers:1,kpiDiff:1,kpiNet:1,kpiPayers:1,kpiTax:1,kpiCount:1,totalPlayers:1,avgSalary:1,totalPayroll:1,totalUnderContract:1,totalProjected:1,totalDifference:1,tenDayCount:1};
+  var _stub = function(){ var s={textContent:'',innerHTML:'',value:'',style:{}}; return s; };
+  document.getElementById = function(id){ var el=_gbi(id); if(el) return el; if(_removed[id]) return _stub(); return null; };
+})();
+</script>
+<script>
 const CSV_URL='https://docs.google.com/spreadsheets/d/e/2PACX-1vRTwTOS_rNBYI8d8zDUivGFWXsXcxlOZgrqn5o-WCvFC5aNAR3vLsSqllE7aO0BRw/pub?gid=1262804733&single=true&output=csv';
 const FALLBACK_B64='LCwyMDI1LzIwMjYgQnJhY2tldHM=';
 const nbaIds={ATL:1610612737,BOS:1610612738,BKN:1610612751,CHO:1610612766,CHI:1610612741,CLE:1610612739,DAL:1610612742,DEN:1610612743,DET:1610612765,GSW:1610612744,HOU:1610612745,IND:1610612754,LAC:1610612746,LAL:1610612747,MEM:1610612763,MIA:1610612748,MIL:1610612749,MIN:1610612750,NOP:1610612740,NYK:1610612752,OKC:1610612760,ORL:1610612753,PHI:1610612755,PHX:1610612756,POR:1610612757,SAC:1610612758,SAS:1610612759,TOR:1610612761,UTA:1610612762,WAS:1610612764};
@@ -126,16 +124,29 @@ function barClass(frac){if(frac>=0.5)return'hot';if(frac>=0.2)return'warm';retur
 function parseLine(line){const v=[];let cur='',inQ=false;for(const ch of line){if(ch==='"')inQ=!inQ;else if(ch===','&&!inQ){v.push(cur.trim());cur='';}else cur+=ch;}v.push(cur.trim());return v;}
 
 function parseData(csv){
+  // Real CSV structure:
+  //  col0 = "Team Name 'YY/YY" (team + year combined, e.g. "Atlanta Hawks '25/26")
+  //  col1 = Tax Space, col2 = Repeater?, col3-13 = Bracket 1-11, col14 = Total
+  //  First ~6 rows are bracket reference / league totals junk — skip them.
   const lines=csv.trim().split('\n');
   allTeamData={};
   for(let i=0;i<lines.length;i++){
     const vals=parseLine(lines[i]);
-    if(!vals[0]||vals[0].trim()===''||vals[0].includes('Brackets')||vals[0].includes('Totals')||vals[0].includes('Year'))continue;
-    const team=vals[0].trim();
-    if(!teamAbbrMap[team]&&team.length>3)continue;
+    let c0=(vals[0]||'').trim();
+    if(!c0)continue;
+    // Skip header/junk rows
+    if(c0.includes('Brackets')||c0.includes('Totals')||c0==='Team/Year'||c0.includes('Bracket'))continue;
+    // Team rows look like "Atlanta Hawks '25/26" — must contain an apostrophe-year
+    const m=c0.match(/^(.*?)\s+'?(\d{2}\/\d{2})\s*$/);
+    if(!m)continue;
+    const team=m[1].trim();
+    const yr=m[2].trim();
+    if(!teamAbbrMap[team])continue; // only real teams
+    const taxSpace=parseMoney(vals[1]||'');
+    const repeater=(vals[2]||'').trim();
+    const taxAmts=[];for(let j=3;j<=13;j++)taxAmts.push(parseMoney(vals[j]||''));
+    const total=parseMoney(vals[14]||'');
     if(!allTeamData[team])allTeamData[team]=[];
-    const yr=vals[1]||'';const taxSpace=parseMoney(vals[2]||'');const repeater=vals[3]||'';
-    const taxAmts=vals.slice(4,15).map(v=>parseMoney(v));const total=parseMoney(vals[15]||'');
     allTeamData[team].push({yr,taxSpace,repeater,taxAmts,total});
   }
   sortedTeams=Object.keys(allTeamData).sort((a,b)=>{
@@ -157,30 +168,30 @@ function renderMainTable(){
   const yearCols=years.map((y,i)=>`<th onclick="sortByYear(${i})">${y}<span style="opacity:.4;font-size:8px;margin-left:3px">⇅</span></th>`).join('');
   let html=`<div class="table-wrapper"><table><thead><tr>
     <th style="text-align:left">Team</th>
-    <th>Tax Space</th>
-    <th>Repeater</th>
     ${yearCols}
     <th class="total-col" style="text-align:right">Total Tax</th>
   </tr></thead><tbody>`;
   sortedTeams.forEach((team,idx)=>{
-    const key=escKey(team);const yd=allTeamData[team]||[];const first=yd[0]||{};const logo=logoUrl(team);
+    const key=escKey(team);const yd=allTeamData[team]||[];const logo=logoUrl(team);
     const grand=yd.reduce((s,y)=>s+y.total,0);const frac=grand/maxTotal;const bc=barClass(frac);
-    const isRep=yd.some(y=>y.repeater&&y.repeater.toLowerCase().includes('yes'));
-    const yearSummaries=yd.map(y=>`<td class="${y.total===0?'amt-zero':''}">${formatMoney(y.total)}</td>`).join('');
+    const isRep=yd.some(y=>y.repeater&&y.repeater.toLowerCase().includes('repeater'));
+    // Map each season to its total, aligned to the 5 year columns
+    const byYear={};yd.forEach(y=>byYear[y.yr]=y);
+    const yearCells=years.map(yr=>{const e=byYear[yr];const v=e?e.total:0;return`<td class="${v===0?'amt-zero':''}">${formatMoney(v)}</td>`;}).join('');
     html+=`<tr class="team-row" data-team="${key}" onclick="toggleTeam('${key}')">
-      <td><div class="tm-team-cell"><span class="caret">▶</span><span class="tm-rank">${idx+1}</span>${logo?`<img src="${logo}" class="tm-team-logo" alt="${team}">`:''}<span class="tm-team-name">${team}</span></div></td>
-      <td class="${(first.taxSpace||0)<0?'amt-green':''}">${formatMoney(first.taxSpace||0)}</td>
-      <td>${isRep?'<span class="repeater-badge">Repeater</span>':'—'}</td>
-      ${yearSummaries}
+      <td><div class="tm-team-cell"><span class="caret">▶</span><span class="tm-rank">${idx+1}</span>${logo?`<img src="${logo}" class="tm-team-logo" alt="${team}">`:''}<span class="tm-team-name">${team}</span>${isRep?'<span class="repeater-badge" style="margin-left:6px">Rep</span>':''}</div></td>
+      ${yearCells}
       <td class="total-col-cell tm-bar-cell"><div class="tm-bar-track"><div class="tm-bar-wrap"><div class="tm-bar ${bc}" style="width:${Math.max(frac*100,2)}%"></div></div><span class="tm-total ${bc==='hot'?'hot':bc==='warm'?'warm':''}">${formatShort(grand)}</span></div></td>
     </tr>`;
+    // Year detail rows: show tax space + total per season, aligned under each year column
     yd.forEach(y=>{
-      const bracketCells=y.taxAmts.slice(0,5).map(a=>`<td class="${a?'':'amt-zero'}">${formatMoney(a)}</td>`).join('');
+      const yearCells2=years.map(yr=>{
+        if(yr===y.yr)return`<td class="${(y.taxSpace||0)<0?'amt-green':''}" style="color:var(--text-primary)">${formatMoney(y.total)}</td>`;
+        return`<td class="amt-zero"></td>`;
+      }).join('');
       html+=`<tr class="year-row" data-team="${key}">
-        <td>${y.yr||''}</td>
-        <td class="${(y.taxSpace||0)<0?'amt-green':''}">${formatMoney(y.taxSpace)}</td>
-        <td>${y.repeater&&y.repeater.toLowerCase().includes('yes')?'<span class="repeater-badge">Repeater</span>':'—'}</td>
-        ${bracketCells}
+        <td>${y.yr} &nbsp;·&nbsp; <span style="color:var(--text-faint)">Tax Space ${formatShort(y.taxSpace)}</span></td>
+        ${yearCells2}
         <td class="total-col-cell"><span class="tm-total">${formatShort(y.total)}</span></td>
       </tr>`;
     });
@@ -196,7 +207,7 @@ function updateVisibility(){
   document.querySelectorAll('tr.year-row').forEach(el=>el.classList.toggle('show',expandedSet.has(el.dataset.team)));
   document.querySelectorAll('tr.team-row').forEach(tr=>tr.classList.toggle('expanded',expandedSet.has(tr.dataset.team)));
 }
-function sortByYear(i){sortedTeams.sort((a,b)=>(allTeamData[b][i]?.total||0)-(allTeamData[a][i]?.total||0));renderMainTable();}
+function sortByYear(i){const years=['25/26','26/27','27/28','28/29','29/30'];const yr=years[i];function getYrTotal(t){const e=(allTeamData[t]||[]).find(y=>y.yr===yr);return e?e.total:0;}sortedTeams.sort((a,b)=>getYrTotal(b)-getYrTotal(a));renderMainTable();}
 async function init(){
   try{const resp=await fetch(CSV_URL);if(!resp.ok)throw new Error();parseData(await resp.text());}
   catch(e){try{parseData(atob(FALLBACK_B64));}catch(e2){document.getElementById('app').innerHTML='<div style="text-align:center;padding:80px;color:var(--bar-hot)">Failed to load data.</div>';return;}}
